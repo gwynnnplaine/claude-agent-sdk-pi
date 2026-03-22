@@ -1,19 +1,20 @@
 import type { query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { Api, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Effect, Either } from "effect";
 import { ClaudeAgentSdkProviderError, toProviderError } from "./errors.js";
 
 export type ClaudeQueryOptions = NonNullable<Parameters<typeof query>[0]["options"]>;
 
 export type BeforeQueryHookContext = {
-	model: Model<any>;
+	model: Model<Api>;
 	context: Context;
 	options: SimpleStreamOptions | undefined;
 	queryOptions: ClaudeQueryOptions;
 };
 
 export type StreamEventHookContext = {
-	model: Model<any>;
+	model: Model<Api>;
 	context: Context;
 	options: SimpleStreamOptions | undefined;
 	message: SDKMessage;
@@ -42,16 +43,36 @@ export type ClaudeAgentSdkFeature = {
 	onToolResult?: (ctx: ToolResultHookContext) => void;
 };
 
-export type TypedToolPlugin<TArgs extends Record<string, unknown>, TResult = unknown> = {
+type TypedToolPluginBase<TArgs extends Record<string, unknown>> = {
 	name: string;
 	toolName: string;
 	decodeArgs: (args: Record<string, unknown>) => TArgs;
-	decodeResult?: (result: unknown) => TResult;
 	onToolCall?: (ctx: ToolCallHookContext<TArgs>) => void;
+};
+
+type TypedToolPluginWithoutResultDecoder<TArgs extends Record<string, unknown>> = TypedToolPluginBase<TArgs> & {
+	decodeResult?: undefined;
+	onToolResult?: (ctx: ToolResultHookContext<unknown>) => void;
+};
+
+type TypedToolPluginWithResultDecoder<TArgs extends Record<string, unknown>, TResult> = TypedToolPluginBase<TArgs> & {
+	decodeResult: (result: unknown) => TResult;
 	onToolResult?: (ctx: ToolResultHookContext<TResult>) => void;
 };
 
-export function createToolPlugin<TArgs extends Record<string, unknown>, TResult = unknown>(
+export type TypedToolPlugin<TArgs extends Record<string, unknown>, TResult = unknown> =
+	| TypedToolPluginWithoutResultDecoder<TArgs>
+	| TypedToolPluginWithResultDecoder<TArgs, TResult>;
+
+export function createToolPlugin<TArgs extends Record<string, unknown>>(
+	plugin: TypedToolPluginWithoutResultDecoder<TArgs>,
+): ClaudeAgentSdkFeature;
+
+export function createToolPlugin<TArgs extends Record<string, unknown>, TResult>(
+	plugin: TypedToolPluginWithResultDecoder<TArgs, TResult>,
+): ClaudeAgentSdkFeature;
+
+export function createToolPlugin<TArgs extends Record<string, unknown>, TResult>(
 	plugin: TypedToolPlugin<TArgs, TResult>,
 ): ClaudeAgentSdkFeature {
 	return {
@@ -68,11 +89,20 @@ export function createToolPlugin<TArgs extends Record<string, unknown>, TResult 
 		onToolResult: (ctx) => {
 			if (ctx.toolName !== plugin.toolName) return;
 			if (!plugin.onToolResult) return;
-			const decodedResult = plugin.decodeResult ? plugin.decodeResult(ctx.result) : (ctx.result as TResult);
+			if (plugin.decodeResult) {
+				plugin.onToolResult({
+					toolCallId: ctx.toolCallId,
+					toolName: ctx.toolName,
+					result: plugin.decodeResult(ctx.result),
+					isError: ctx.isError,
+					timestamp: ctx.timestamp,
+				});
+				return;
+			}
 			plugin.onToolResult({
 				toolCallId: ctx.toolCallId,
 				toolName: ctx.toolName,
-				result: decodedResult,
+				result: ctx.result,
 				isError: ctx.isError,
 				timestamp: ctx.timestamp,
 			});
@@ -83,75 +113,81 @@ export function createToolPlugin<TArgs extends Record<string, unknown>, TResult 
 export class FeatureRuntime {
 	constructor(private readonly features: ReadonlyArray<ClaudeAgentSdkFeature>) {}
 
-	register(pi: ExtensionAPI): void {
-		for (const feature of this.features) {
-			if (!feature.onRegister) continue;
-			try {
-				feature.onRegister({ pi });
-			} catch (error) {
-				throw toProviderError(error, "feature_hook_error", {
+	private runHookEffect(effect: Effect.Effect<void, ClaudeAgentSdkProviderError>): void {
+		const result = Effect.runSync(Effect.either(effect));
+		if (Either.isLeft(result)) throw result.left;
+	}
+
+	private invokeHook(
+		feature: ClaudeAgentSdkFeature,
+		hook: NonNullable<ClaudeAgentSdkProviderError["details"]["hook"]>,
+		run: () => void,
+		extraDetails: ClaudeAgentSdkProviderError["details"] = {},
+	): Effect.Effect<void, ClaudeAgentSdkProviderError> {
+		return Effect.try({
+			try: run,
+			catch: (error) =>
+				toProviderError(error, "feature_hook_error", {
+					...extraDetails,
 					featureName: feature.name,
-					hook: "onRegister",
-				});
-			}
-		}
+					hook,
+				}),
+		});
+	}
+
+	register(pi: ExtensionAPI): void {
+		const program = Effect.forEach(this.features, (feature) => {
+			if (!feature.onRegister) return Effect.void;
+			return this.invokeHook(feature, "onRegister", () => {
+				feature.onRegister?.({ pi });
+			});
+		}, { discard: true });
+		this.runHookEffect(program);
 	}
 
 	runBeforeQuery(ctx: BeforeQueryHookContext): void {
-		for (const feature of this.features) {
-			if (!feature.beforeQuery) continue;
-			try {
-				feature.beforeQuery(ctx);
-			} catch (error) {
-				throw toProviderError(error, "feature_hook_error", {
-					featureName: feature.name,
-					hook: "beforeQuery",
-				});
-			}
-		}
+		const program = Effect.forEach(this.features, (feature) => {
+			if (!feature.beforeQuery) return Effect.void;
+			return this.invokeHook(feature, "beforeQuery", () => {
+				feature.beforeQuery?.(ctx);
+			});
+		}, { discard: true });
+		this.runHookEffect(program);
 	}
 
 	emitStreamEvent(ctx: StreamEventHookContext): void {
-		for (const feature of this.features) {
-			if (!feature.onStreamEvent) continue;
-			try {
-				feature.onStreamEvent(ctx);
-			} catch (error) {
-				throw toProviderError(error, "feature_hook_error", {
-					featureName: feature.name,
-					hook: "onStreamEvent",
-					messageType: ctx.message.type,
-				});
-			}
-		}
+		const program = Effect.forEach(this.features, (feature) => {
+			if (!feature.onStreamEvent) return Effect.void;
+			return this.invokeHook(
+				feature,
+				"onStreamEvent",
+				() => {
+					feature.onStreamEvent?.(ctx);
+				},
+				{ messageType: ctx.message.type },
+			);
+		}, { discard: true });
+		this.runHookEffect(program);
 	}
 
 	emitToolCall(ctx: ToolCallHookContext): void {
-		for (const feature of this.features) {
-			if (!feature.onToolCall) continue;
-			try {
-				feature.onToolCall(ctx);
-			} catch (error) {
-				throw toProviderError(error, "feature_hook_error", {
-					featureName: feature.name,
-					hook: "onToolCall",
-				});
-			}
-		}
+		const program = Effect.forEach(this.features, (feature) => {
+			if (!feature.onToolCall) return Effect.void;
+			return this.invokeHook(feature, "onToolCall", () => {
+				feature.onToolCall?.(ctx);
+			});
+		}, { discard: true });
+		this.runHookEffect(program);
 	}
 
 	emitToolResult(ctx: ToolResultHookContext): void {
-		for (const feature of this.features) {
-			if (!feature.onToolResult) continue;
-			try {
-				feature.onToolResult(ctx);
-			} catch (error) {
-				throw toProviderError(error, "feature_hook_error", {
-					featureName: feature.name,
-					hook: "onToolResult",
-				});
-			}
-		}
+		const program = Effect.forEach(this.features, (feature) => {
+			if (!feature.onToolResult) return Effect.void;
+			return this.invokeHook(feature, "onToolResult", () => {
+				feature.onToolResult?.(ctx);
+			});
+		}, { discard: true });
+		this.runHookEffect(program);
 	}
 }
 

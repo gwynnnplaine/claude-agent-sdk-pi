@@ -98,28 +98,73 @@ Root entry now re-exports from `src/`:
 - Fixed a routing bug where selected pi model (e.g. Haiku) was not forwarded to Claude SDK query options.
 - Query options now explicitly set `model: model.id`, so the active `/model` selection is respected.
 
+### 8) Stream engine extraction + decomposition completed
+
+- Stream orchestration was extracted from `src/index.ts` into `src/provider/stream.ts`.
+- Then further split into focused provider modules:
+  - `src/provider/stream.ctx.ts`
+  - `src/provider/stream.text.ts`
+  - `src/provider/stream.tool.ts`
+  - `src/provider/stream.thinking.ts`
+  - `src/provider/stream.dispatch.ts`
+  - `src/provider/stream.stop.ts`
+  - `src/provider/stream.opts.ts`
+- `src/index.ts` now acts mostly as wiring/composition for provider registration.
+
+### 9) Test coverage expanded for stream and decoder behavior
+
+- Added stream behavior tests covering:
+  - text flow start/delta/end/done
+  - tool call start/delta/end + `mapToolArgs` mapping
+  - malformed SDK stream event boundary (`invalid_sdk_event` at stream error boundary)
+  - stop reason mapping (`toolUse`, `length`, `stop`)
+- Added focused unit tests for stream dispatch/reducer modules.
+- Added boundary decoder tests for loose index events in `src/decoders/index.events.ts`.
+
+### 10) Effect-first hardening pass completed across runtime modules
+
+- Added dedicated decoder module for tool-watch hydration/parsing:
+  - `src/decoders/toolWatch.entries.ts`
+- Added extension event typing augmentation:
+  - `src/decoders/pi.events.d.ts`
+- Added SDK MCP typing augmentation to avoid unsafe schema cast at provider boundary:
+  - `src/decoders/sdk.mcp.d.ts`
+- Removed unsafe runtime casts and `any` leakage in:
+  - `src/provider/toolWatch.ts`
+  - `src/provider/stream.ts`
+  - `src/provider/stream.opts.ts`
+  - `src/provider/stream.tool.ts`
+  - `src/core/features.ts`
+  - `src/config/providerSettings.ts`
+  - `src/index.ts` (event wiring + prompt/image handling)
+- Current state: runtime `src/` no unsafe `as` casts and no `any` (remaining `as const` only).
+
+### 11) Additional direct unit tests added (edge-focused)
+
+- `tests/provider/stream.thinking.test.ts`
+- `tests/provider/stream.stop.test.ts`
+- `tests/provider/stream.opts.test.ts`
+- Expanded `tests/provider/toolWatch.test.ts` malformed-entry coverage.
+- Updated existing tests to reduce type escapes and improve typed fixtures.
+- Removed remaining stream test SDK message cast by switching to typed beta stream-event fixtures.
+
 ---
 
 ## What is not done yet
 
-1. Full decomposition of `src/index.ts` into smaller provider/feature modules.
-2. Removal of remaining loose typings (`any` hotspots) in stream/event parsing paths.
-3. Runtime schema decoding for all external SDK event payloads.
-4. Automated tests for feature runtime, error mapping, and tool plugin behavior.
-5. Backward-compatibility/migration notes beyond alpha docs.
+1. Evaluate replacing SDK MCP typing augmentation with a stricter schema adapter (if we want to avoid declaration widening long-term).
+2. Decide/finalize extraction of tool-watch event wiring from `src/index.ts` into a dedicated feature module.
+3. Add migration/backward-compatibility notes beyond alpha docs.
 
 ---
 
 ## Next planned steps
 
-1. Extract stream engine into `src/provider/stream.ts`.
-2. Move tool-watch logic into a dedicated feature module.
-3. Add runtime decoders for SDK message/event boundaries.
-4. Add tests for:
-   - feature hook execution order
-   - typed plugin decoding paths
-   - provider error wrapping/exposure
-5. Reduce remaining `any` usage to near-zero.
+1. Explore strict conversion/adapter for custom tool schemas instead of declaration-level widening.
+2. Optionally extract tool-watch wiring from `src/index.ts` into a focused feature module (minimal diff).
+3. Add migration/backward-compatibility notes beyond alpha docs.
+4. Keep adding TDD slices for any new boundary hardening.
+5. Re-run `npm test` + `npm run typecheck` after each slice.
 
 ---
 

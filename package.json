@@ -21,6 +21,13 @@
     "@types/node": "^24.3.0",
     "typescript": "^5.9.3"
   },
+  "scripts": {
+    "test:clean": "rm -rf .test-dist",
+    "test:build": "npm run test:clean && tsc -p tsconfig.test.json",
+    "test:run": "node --test .test-dist/tests/**/*.test.js",
+    "test": "npm run test:build && npm run test:run",
+    "typecheck": "tsc --noEmit"
+  },
   "pi": {
     "extensions": [
       "./index.ts"

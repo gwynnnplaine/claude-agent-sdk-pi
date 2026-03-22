@@ -11,7 +11,7 @@ export type ProviderSettings = {
 
 type JsonRecord = Record<string, unknown>;
 
-const ALLOWED_SETTING_SOURCES: ReadonlySet<SettingSource> = new Set(["user", "project", "local"]);
+const ALLOWED_SETTING_SOURCES: ReadonlySet<string> = new Set(["user", "project", "local"]);
 
 class SettingsFileParseError extends Error {
 	constructor(readonly filePath: string, readonly cause: unknown) {
@@ -29,8 +29,16 @@ function decodeSettingSources(value: unknown): SettingSource[] | undefined {
 	const decoded: SettingSource[] = [];
 	for (const item of value) {
 		if (typeof item !== "string") return undefined;
-		if (!ALLOWED_SETTING_SOURCES.has(item as SettingSource)) return undefined;
-		decoded.push(item as SettingSource);
+		if (!ALLOWED_SETTING_SOURCES.has(item)) return undefined;
+		switch (item) {
+			case "user":
+			case "project":
+			case "local":
+				decoded.push(item);
+				break;
+			default:
+				return undefined;
+		}
 	}
 	return decoded;
 }
@@ -63,7 +71,10 @@ function readSettingsFile(filePath: string): Effect.Effect<ProviderSettings> {
 			catch: (cause) => new SettingsFileParseError(filePath, cause),
 		});
 		const parsed = yield* Effect.try({
-			try: () => JSON.parse(raw) as unknown,
+			try: () => {
+				const parsedValue: unknown = JSON.parse(raw);
+				return parsedValue;
+			},
 			catch: (cause) => new SettingsFileParseError(filePath, cause),
 		});
 
