@@ -34,30 +34,32 @@ export type ToolResultHookContext<TResult = unknown> = {
 	timestamp: number;
 };
 
+type FeatureHookResult = void | Promise<void>;
+
 export type ClaudeAgentSdkFeature = {
 	name: string;
-	onRegister?: (ctx: { pi: ExtensionAPI }) => void;
-	beforeQuery?: (ctx: BeforeQueryHookContext) => void;
-	onStreamEvent?: (ctx: StreamEventHookContext) => void;
-	onToolCall?: (ctx: ToolCallHookContext) => void;
-	onToolResult?: (ctx: ToolResultHookContext) => void;
+	onRegister?: (ctx: { pi: ExtensionAPI }) => FeatureHookResult;
+	beforeQuery?: (ctx: BeforeQueryHookContext) => FeatureHookResult;
+	onStreamEvent?: (ctx: StreamEventHookContext) => FeatureHookResult;
+	onToolCall?: (ctx: ToolCallHookContext) => FeatureHookResult;
+	onToolResult?: (ctx: ToolResultHookContext) => FeatureHookResult;
 };
 
 type TypedToolPluginBase<TArgs extends Record<string, unknown>> = {
 	name: string;
 	toolName: string;
 	decodeArgs: (args: Record<string, unknown>) => TArgs;
-	onToolCall?: (ctx: ToolCallHookContext<TArgs>) => void;
+	onToolCall?: (ctx: ToolCallHookContext<TArgs>) => FeatureHookResult;
 };
 
 type TypedToolPluginWithoutResultDecoder<TArgs extends Record<string, unknown>> = TypedToolPluginBase<TArgs> & {
 	decodeResult?: undefined;
-	onToolResult?: (ctx: ToolResultHookContext<unknown>) => void;
+	onToolResult?: (ctx: ToolResultHookContext<unknown>) => FeatureHookResult;
 };
 
 type TypedToolPluginWithResultDecoder<TArgs extends Record<string, unknown>, TResult> = TypedToolPluginBase<TArgs> & {
 	decodeResult: (result: unknown) => TResult;
-	onToolResult?: (ctx: ToolResultHookContext<TResult>) => void;
+	onToolResult?: (ctx: ToolResultHookContext<TResult>) => FeatureHookResult;
 };
 
 export type TypedToolPlugin<TArgs extends Record<string, unknown>, TResult = unknown> =
@@ -80,7 +82,7 @@ export function createToolPlugin<TArgs extends Record<string, unknown>, TResult>
 		onToolCall: (ctx) => {
 			if (ctx.toolName !== plugin.toolName) return;
 			if (!plugin.onToolCall) return;
-			plugin.onToolCall({
+			return plugin.onToolCall({
 				toolCallId: ctx.toolCallId,
 				toolName: ctx.toolName,
 				args: plugin.decodeArgs(ctx.args),
@@ -90,16 +92,15 @@ export function createToolPlugin<TArgs extends Record<string, unknown>, TResult>
 			if (ctx.toolName !== plugin.toolName) return;
 			if (!plugin.onToolResult) return;
 			if (plugin.decodeResult) {
-				plugin.onToolResult({
+				return plugin.onToolResult({
 					toolCallId: ctx.toolCallId,
 					toolName: ctx.toolName,
 					result: plugin.decodeResult(ctx.result),
 					isError: ctx.isError,
 					timestamp: ctx.timestamp,
 				});
-				return;
 			}
-			plugin.onToolResult({
+			return plugin.onToolResult({
 				toolCallId: ctx.toolCallId,
 				toolName: ctx.toolName,
 				result: ctx.result,
@@ -113,19 +114,19 @@ export function createToolPlugin<TArgs extends Record<string, unknown>, TResult>
 export class FeatureRuntime {
 	constructor(private readonly features: ReadonlyArray<ClaudeAgentSdkFeature>) {}
 
-	private runHookEffect(effect: Effect.Effect<void, ClaudeAgentSdkProviderError>): void {
-		const result = Effect.runSync(Effect.either(effect));
+	private async runHookEffect(effect: Effect.Effect<void, ClaudeAgentSdkProviderError>): Promise<void> {
+		const result = await Effect.runPromise(Effect.either(effect));
 		if (Either.isLeft(result)) throw result.left;
 	}
 
 	private invokeHook(
 		feature: ClaudeAgentSdkFeature,
 		hook: NonNullable<ClaudeAgentSdkProviderError["details"]["hook"]>,
-		run: () => void,
+		run: () => FeatureHookResult,
 		extraDetails: ClaudeAgentSdkProviderError["details"] = {},
 	): Effect.Effect<void, ClaudeAgentSdkProviderError> {
-		return Effect.try({
-			try: run,
+		return Effect.tryPromise({
+			try: () => Promise.resolve().then(run),
 			catch: (error) =>
 				toProviderError(error, "feature_hook_error", {
 					...extraDetails,
@@ -135,59 +136,79 @@ export class FeatureRuntime {
 		});
 	}
 
-	register(pi: ExtensionAPI): void {
-		const program = Effect.forEach(this.features, (feature) => {
-			if (!feature.onRegister) return Effect.void;
-			return this.invokeHook(feature, "onRegister", () => {
-				feature.onRegister?.({ pi });
-			});
-		}, { discard: true });
-		this.runHookEffect(program);
+	register(pi: ExtensionAPI): Promise<void> {
+		const program = Effect.forEach(
+			this.features,
+			(feature) => {
+				if (!feature.onRegister) return Effect.void;
+				return this.invokeHook(feature, "onRegister", () => {
+					return feature.onRegister?.({ pi });
+				});
+			},
+			{ discard: true },
+		);
+		return this.runHookEffect(program);
 	}
 
-	runBeforeQuery(ctx: BeforeQueryHookContext): void {
-		const program = Effect.forEach(this.features, (feature) => {
-			if (!feature.beforeQuery) return Effect.void;
-			return this.invokeHook(feature, "beforeQuery", () => {
-				feature.beforeQuery?.(ctx);
-			});
-		}, { discard: true });
-		this.runHookEffect(program);
+	runBeforeQuery(ctx: BeforeQueryHookContext): Promise<void> {
+		const program = Effect.forEach(
+			this.features,
+			(feature) => {
+				if (!feature.beforeQuery) return Effect.void;
+				return this.invokeHook(feature, "beforeQuery", () => {
+					return feature.beforeQuery?.(ctx);
+				});
+			},
+			{ discard: true },
+		);
+		return this.runHookEffect(program);
 	}
 
-	emitStreamEvent(ctx: StreamEventHookContext): void {
-		const program = Effect.forEach(this.features, (feature) => {
-			if (!feature.onStreamEvent) return Effect.void;
-			return this.invokeHook(
-				feature,
-				"onStreamEvent",
-				() => {
-					feature.onStreamEvent?.(ctx);
-				},
-				{ messageType: ctx.message.type },
-			);
-		}, { discard: true });
-		this.runHookEffect(program);
+	emitStreamEvent(ctx: StreamEventHookContext): Promise<void> {
+		const program = Effect.forEach(
+			this.features,
+			(feature) => {
+				if (!feature.onStreamEvent) return Effect.void;
+				return this.invokeHook(
+					feature,
+					"onStreamEvent",
+					() => {
+						return feature.onStreamEvent?.(ctx);
+					},
+					{ messageType: ctx.message.type },
+				);
+			},
+			{ discard: true },
+		);
+		return this.runHookEffect(program);
 	}
 
-	emitToolCall(ctx: ToolCallHookContext): void {
-		const program = Effect.forEach(this.features, (feature) => {
-			if (!feature.onToolCall) return Effect.void;
-			return this.invokeHook(feature, "onToolCall", () => {
-				feature.onToolCall?.(ctx);
-			});
-		}, { discard: true });
-		this.runHookEffect(program);
+	emitToolCall(ctx: ToolCallHookContext): Promise<void> {
+		const program = Effect.forEach(
+			this.features,
+			(feature) => {
+				if (!feature.onToolCall) return Effect.void;
+				return this.invokeHook(feature, "onToolCall", () => {
+					return feature.onToolCall?.(ctx);
+				});
+			},
+			{ discard: true },
+		);
+		return this.runHookEffect(program);
 	}
 
-	emitToolResult(ctx: ToolResultHookContext): void {
-		const program = Effect.forEach(this.features, (feature) => {
-			if (!feature.onToolResult) return Effect.void;
-			return this.invokeHook(feature, "onToolResult", () => {
-				feature.onToolResult?.(ctx);
-			});
-		}, { discard: true });
-		this.runHookEffect(program);
+	emitToolResult(ctx: ToolResultHookContext): Promise<void> {
+		const program = Effect.forEach(
+			this.features,
+			(feature) => {
+				if (!feature.onToolResult) return Effect.void;
+				return this.invokeHook(feature, "onToolResult", () => {
+					return feature.onToolResult?.(ctx);
+				});
+			},
+			{ discard: true },
+		);
+		return this.runHookEffect(program);
 	}
 }
 

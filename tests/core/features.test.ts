@@ -38,25 +38,29 @@ function createBeforeQueryCtx(): BeforeQueryHookContext {
 	};
 }
 
-test("FeatureRuntime runs beforeQuery hooks in registration order", () => {
+test("FeatureRuntime runs beforeQuery hooks in registration order", async () => {
 	const calls: string[] = [];
 	const runtime = createFeatureRuntime([
 		{
 			name: "first",
-			beforeQuery: () => calls.push("first"),
+			beforeQuery: () => {
+				calls.push("first");
+			},
 		},
 		{
 			name: "second",
-			beforeQuery: () => calls.push("second"),
+			beforeQuery: () => {
+				calls.push("second");
+			},
 		},
 	]);
 
-	runtime.runBeforeQuery(createBeforeQueryCtx());
+	await runtime.runBeforeQuery(createBeforeQueryCtx());
 
 	assert.deepEqual(calls, ["first", "second"]);
 });
 
-test("FeatureRuntime wraps failing hooks as ClaudeAgentSdkProviderError", () => {
+test("FeatureRuntime wraps failing hooks as ClaudeAgentSdkProviderError", async () => {
 	const runtime = createFeatureRuntime([
 		{
 			name: "boom",
@@ -66,8 +70,8 @@ test("FeatureRuntime wraps failing hooks as ClaudeAgentSdkProviderError", () => 
 		},
 	]);
 
-	assert.throws(
-		() => runtime.emitToolCall({ toolCallId: "id", toolName: "read", args: {} }),
+	await assert.rejects(
+		async () => runtime.emitToolCall({ toolCallId: "id", toolName: "read", args: {} }),
 		(error: unknown) => {
 			assert.ok(error instanceof ClaudeAgentSdkProviderError);
 			assert.equal(error.code, "feature_hook_error");
@@ -79,7 +83,30 @@ test("FeatureRuntime wraps failing hooks as ClaudeAgentSdkProviderError", () => 
 	);
 });
 
-test("createToolPlugin decodes args/result before invoking typed hooks", () => {
+test("FeatureRuntime wraps async hook rejections as ClaudeAgentSdkProviderError", async () => {
+	const runtime = createFeatureRuntime([
+		{
+			name: "async-boom",
+			onToolCall: async () => {
+				throw new Error("async kaboom");
+			},
+		},
+	]);
+
+	await assert.rejects(
+		async () => runtime.emitToolCall({ toolCallId: "id", toolName: "read", args: {} }),
+		(error: unknown) => {
+			assert.ok(error instanceof ClaudeAgentSdkProviderError);
+			assert.equal(error.code, "feature_hook_error");
+			assert.equal(error.message, "async kaboom");
+			assert.equal(error.details.featureName, "async-boom");
+			assert.equal(error.details.hook, "onToolCall");
+			return true;
+		},
+	);
+});
+
+test("createToolPlugin decodes args/result before invoking typed hooks", async () => {
 	let seenCall: ToolCallHookContext<{ path: string }> | undefined;
 	let seenResult: ToolResultHookContext<{ ok: boolean }> | undefined;
 
@@ -98,8 +125,8 @@ test("createToolPlugin decodes args/result before invoking typed hooks", () => {
 		}),
 	]);
 
-	runtime.emitToolCall({ toolCallId: "call-1", toolName: "read", args: { path: "/tmp/a" } });
-	runtime.emitToolResult({
+	await runtime.emitToolCall({ toolCallId: "call-1", toolName: "read", args: { path: "/tmp/a" } });
+	await runtime.emitToolResult({
 		toolCallId: "call-1",
 		toolName: "read",
 		result: "done",
@@ -121,7 +148,7 @@ test("createToolPlugin decodes args/result before invoking typed hooks", () => {
 	});
 });
 
-test("createToolPlugin passes through unknown result when decodeResult is omitted", () => {
+test("createToolPlugin passes through unknown result when decodeResult is omitted", async () => {
 	let seenResult: ToolResultHookContext<unknown> | undefined;
 
 	const runtime = createFeatureRuntime([
@@ -135,7 +162,7 @@ test("createToolPlugin passes through unknown result when decodeResult is omitte
 		}),
 	]);
 
-	runtime.emitToolResult({
+	await runtime.emitToolResult({
 		toolCallId: "call-1",
 		toolName: "read",
 		result: { ok: true },
@@ -152,7 +179,7 @@ test("createToolPlugin passes through unknown result when decodeResult is omitte
 	});
 });
 
-test("createToolPlugin failures are wrapped by runtime", () => {
+test("createToolPlugin failures are wrapped by runtime", async () => {
 	const runtime = createFeatureRuntime([
 		createToolPlugin({
 			name: "typed-read",
@@ -166,8 +193,8 @@ test("createToolPlugin failures are wrapped by runtime", () => {
 		}),
 	]);
 
-	assert.throws(
-		() => runtime.emitToolCall({ toolCallId: "call-1", toolName: "read", args: {} }),
+	await assert.rejects(
+		async () => runtime.emitToolCall({ toolCallId: "call-1", toolName: "read", args: {} }),
 		(error: unknown) => {
 			assert.ok(error instanceof ClaudeAgentSdkProviderError);
 			assert.equal(error.code, "feature_hook_error");

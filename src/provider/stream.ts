@@ -115,7 +115,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 			let sawToolCall = false;
 			let shouldStopEarly = false;
 
-			const emitDispatchEvents = (events: StreamDispatchEmission[]) => {
+			const emitDispatchEvents = async (events: StreamDispatchEmission[]) => {
 				for (const item of events) {
 					switch (item.type) {
 						case "text_start":
@@ -145,7 +145,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 							break;
 						case "toolcall_end":
 							sawToolCall = true;
-							featureRuntime.emitToolCall({
+							await featureRuntime.emitToolCall({
 								toolCallId: item.toolCall.id,
 								toolName: item.toolCall.name,
 								args: item.toolCall.arguments,
@@ -198,7 +198,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 					...(mcpServers ? { mcpServers } : {}),
 				};
 
-				featureRuntime.runBeforeQuery({ model, context, options, queryOptions });
+				await featureRuntime.runBeforeQuery({ model, context, options, queryOptions });
 				const maxThinkingTokens = mapThinkingTokens(options?.reasoning, model.id, options?.thinkingBudgets);
 				if (maxThinkingTokens != null) queryOptions.maxThinkingTokens = maxThinkingTokens;
 
@@ -211,7 +211,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 						started = true;
 					}
 
-					featureRuntime.emitStreamEvent({ model, context, options, message });
+					await featureRuntime.emitStreamEvent({ model, context, options, message });
 
 					switch (message.type) {
 						case "stream_event": {
@@ -229,7 +229,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 										mapSdkToolNameToPi: (toolName) => deps.mapSdkToolNameToPi(toolName, customToolNameToPi),
 										mapToolArgs: (toolName, args) => mapToolArgs(toolName, args, allowSkillAliasRewrite),
 									});
-									if (result.handled) emitDispatchEvents(result.emissions);
+									if (result.handled) await emitDispatchEvents(result.emissions);
 									break;
 								}
 								case "message_delta":

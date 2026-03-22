@@ -330,7 +330,9 @@ function extractAgentsAppend(): string | undefined {
 		if (!content) return undefined;
 		const sanitized = sanitizeAgentsContent(content);
 		return sanitized.length > 0 ? `# CLAUDE.md\n\n${sanitized}` : undefined;
-	} catch {
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.warn(`[claude-agent-sdk] Failed to read AGENTS.md at ${agentsPath}: ${message}`);
 		return undefined;
 	}
 }
@@ -409,12 +411,22 @@ export type ClaudeAgentSdkProviderOptions = {
 	features?: ReadonlyArray<ClaudeAgentSdkFeature>;
 };
 
+function reportRuntimeFeatureError(error: unknown): void {
+	const providerError = reportFeatureError(error);
+	extensionApi?.appendEntry("claude-agent-sdk-feature-error", {
+		code: providerError.code,
+		message: providerError.message,
+		details: providerError.details,
+	});
+}
+
 export function createProvider(options: ClaudeAgentSdkProviderOptions = {}) {
 	const featureRuntime = createFeatureRuntime(options.features ?? []);
+	const providerSettings = loadProviderSettings();
 
 	return function registerProvider(pi: ExtensionAPI) {
 		extensionApi = pi;
-		featureRuntime.register(pi);
+		void featureRuntime.register(pi).catch(reportRuntimeFeatureError);
 		const streamSimple = createStreamClaudeAgentSdk(featureRuntime, {
 			resolveSdkTools,
 			mapSdkToolNameToPi,
@@ -424,7 +436,7 @@ export function createProvider(options: ClaudeAgentSdkProviderOptions = {}) {
 			buildPromptBlocks,
 			buildPromptStream,
 			buildCustomToolServers,
-			getProviderSettings: loadProviderSettings,
+			getProviderSettings: () => providerSettings,
 			extractAgentsAppend,
 			extractSkillsAppend,
 			toolExecutionDeniedMessage: TOOL_EXECUTION_DENIED_MESSAGE,
@@ -506,22 +518,15 @@ export function createProvider(options: ClaudeAgentSdkProviderOptions = {}) {
 				isError: toolResult.isError,
 				timestamp,
 			});
-			try {
-				featureRuntime.emitToolResult({
+			void featureRuntime
+				.emitToolResult({
 					toolCallId: toolResult.toolCallId,
 					toolName: toolResult.toolName,
 					result: content,
 					isError: toolResult.isError,
 					timestamp,
-				});
-			} catch (error) {
-				const providerError = reportFeatureError(error);
-				extensionApi?.appendEntry("claude-agent-sdk-feature-error", {
-					code: providerError.code,
-					message: providerError.message,
-					details: providerError.details,
-				});
-			}
+				})
+				.catch(reportRuntimeFeatureError);
 		}
 	});
 
@@ -561,22 +566,15 @@ export function createProvider(options: ClaudeAgentSdkProviderOptions = {}) {
 			timestamp,
 		});
 
-		try {
-			featureRuntime.emitToolResult({
+		void featureRuntime
+			.emitToolResult({
 				toolCallId: toolExecutionEnd.toolCallId,
 				toolName: toolExecutionEnd.toolName,
 				result: content,
 				isError,
 				timestamp,
-			});
-		} catch (error) {
-			const providerError = reportFeatureError(error);
-			extensionApi?.appendEntry("claude-agent-sdk-feature-error", {
-				code: providerError.code,
-				message: providerError.message,
-				details: providerError.details,
-			});
-		}
+			})
+			.catch(reportRuntimeFeatureError);
 
 		extensionApi?.appendEntry<ToolWatchCustomEntryData>(TOOL_WATCH_CUSTOM_TYPE, {
 			type: "tool_execution_end",
