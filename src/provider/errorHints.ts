@@ -29,6 +29,16 @@ const NETWORK_PATTERNS: ReadonlyArray<RegExp> = [
 	/certificate/i,
 ];
 
+const REDACTION_PATTERNS: ReadonlyArray<{ pattern: RegExp; replacement: string }> = [
+	{ pattern: /sk-ant-[a-z0-9_-]+/gi, replacement: "[REDACTED_API_KEY]" },
+	{ pattern: /(Bearer\s+)[a-z0-9._-]+/gi, replacement: "$1[REDACTED]" },
+	{ pattern: /(api[_-]?key\s*[:=]\s*)[^\s,;]+/gi, replacement: "$1[REDACTED]" },
+	{ pattern: /(authorization\s*[:=]\s*)[^\n]+/gi, replacement: "$1[REDACTED]" },
+];
+
+const MAX_CAUSE_MESSAGE_CHARS = 300;
+const MAX_VISIBLE_CAUSE_MESSAGES = 3;
+
 function getMessage(value: unknown): string | undefined {
 	if (typeof value === "string") {
 		const trimmed = value.trim();
@@ -56,6 +66,24 @@ function includesAnyPattern(text: string, patterns: ReadonlyArray<RegExp>): bool
 		if (pattern.test(text)) return true;
 	}
 	return false;
+}
+
+function truncateText(text: string, limit: number): string {
+	if (text.length <= limit) return text;
+	return `${text.slice(0, limit)}...[truncated]`;
+}
+
+function redactSensitiveText(text: string): string {
+	let redacted = text;
+	for (const { pattern, replacement } of REDACTION_PATTERNS) {
+		redacted = redacted.replace(pattern, replacement);
+	}
+	return redacted;
+}
+
+function sanitizeForOutput(text: string): string {
+	const redacted = redactSensitiveText(text).trim();
+	return truncateText(redacted, MAX_CAUSE_MESSAGE_CHARS);
 }
 
 function collectErrorMessages(error: unknown): string[] {
@@ -98,13 +126,24 @@ function buildActionHints(messages: string[]): string[] {
 }
 
 export function formatProviderErrorMessage(error: ClaudeAgentSdkProviderError): string {
-	const base = `[${error.code}] ${error.message}`;
-	const messages = collectErrorMessages(error);
-	const causeMessages = messages.filter((message) => message !== error.message);
-	const hints = buildActionHints(messages);
+	const rawMessages = collectErrorMessages(error);
+	const hints = buildActionHints(rawMessages);
+
+	const baseMessage = sanitizeForOutput(error.message || "Unknown error");
+	const base = `[${error.code}] ${baseMessage}`;
+
+	const sanitizedMessages = rawMessages
+		.map(sanitizeForOutput)
+		.filter((message) => message.length > 0);
+	const causeMessages = Array.from(new Set(sanitizedMessages.filter((message) => message !== baseMessage)));
 
 	const lines = [base];
-	if (causeMessages.length > 0) lines.push(`Cause: ${causeMessages.join(" | ")}`);
+	if (causeMessages.length > 0) {
+		const visible = causeMessages.slice(0, MAX_VISIBLE_CAUSE_MESSAGES);
+		const hiddenCount = causeMessages.length - visible.length;
+		const suffix = hiddenCount > 0 ? ` (+${hiddenCount} more)` : "";
+		lines.push(`Cause: ${visible.join(" | ")}${suffix}`);
+	}
 	for (const hint of hints) lines.push(hint);
 	return lines.join("\n");
 }

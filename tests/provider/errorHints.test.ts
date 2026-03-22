@@ -29,3 +29,13 @@ test("formatProviderErrorMessage keeps simple message unchanged when no hints", 
 	const message = formatProviderErrorMessage(providerError);
 	assert.equal(message, "[stream_error] boom");
 });
+
+test("formatProviderErrorMessage redacts secret-like tokens in cause chain", () => {
+	const cause = new Error("Authorization: Bearer secret-token api_key=sk-ant-abc123xyz");
+	const providerError = toProviderError(new Error("request failed", { cause }), "stream_error");
+	const message = formatProviderErrorMessage(providerError);
+
+	assert.ok(message.includes("Authorization: [REDACTED]"));
+	assert.equal(message.includes("secret-token"), false);
+	assert.equal(message.includes("sk-ant-abc123xyz"), false);
+});

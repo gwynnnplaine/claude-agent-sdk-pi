@@ -62,6 +62,16 @@ function extractProviderSettingsBlock(value: JsonRecord): unknown {
 	return value["claudeAgentSdkProvider"] ?? value["claude-agent-sdk-provider"] ?? value["claudeAgentSdk"];
 }
 
+function logSettingsFallback(error: unknown): void {
+	if (error instanceof SettingsFileParseError) {
+		const causeMessage = error.cause instanceof Error ? error.cause.message : String(error.cause ?? "unknown");
+		console.warn(`[claude-agent-sdk] Ignoring provider settings at ${error.filePath}: ${causeMessage}`);
+		return;
+	}
+	const message = error instanceof Error ? error.message : String(error);
+	console.warn(`[claude-agent-sdk] Ignoring provider settings: ${message}`);
+}
+
 function readSettingsFile(filePath: string): Effect.Effect<ProviderSettings> {
 	return Effect.gen(function* () {
 		if (!existsSync(filePath)) return {};
@@ -80,7 +90,14 @@ function readSettingsFile(filePath: string): Effect.Effect<ProviderSettings> {
 
 		if (!isJsonRecord(parsed)) return {};
 		return decodeProviderSettings(extractProviderSettingsBlock(parsed));
-	}).pipe(Effect.catchAll(() => Effect.succeed({})));
+	}).pipe(
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				logSettingsFallback(error);
+				return {};
+			}),
+		),
+	);
 }
 
 export function loadProviderSettings(): ProviderSettings {
