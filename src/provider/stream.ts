@@ -7,6 +7,7 @@ import { toProviderError } from "../core/errors.js";
 import type { ClaudeQueryOptions, FeatureRuntime } from "../core/features.js";
 import { mapToolArgs } from "../mapping/toolArgs.js";
 import { decodeSdkStreamEventMessageSync } from "./decoders.js";
+import { formatProviderErrorMessage } from "./errorHints.js";
 import { dispatchStreamContentEvent, type StreamDispatchEmission } from "./stream.dispatch.js";
 import type { StreamBlock } from "./stream.ctx.js";
 import { mapThinkingTokens } from "./stream.opts.js";
@@ -267,7 +268,7 @@ export function createStreamClaudeAgentSdk(featureRuntime: FeatureRuntime, deps:
 			} catch (error) {
 				const providerError = toProviderError(error, "stream_error");
 				output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-				output.errorMessage = `[${providerError.code}] ${providerError.message}`;
+				output.errorMessage = formatProviderErrorMessage(providerError);
 				const reason = output.stopReason === "aborted" ? "aborted" : "error";
 				stream.push({ type: "error", reason, error: output });
 				stream.end();

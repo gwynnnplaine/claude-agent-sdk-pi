@@ -2,6 +2,8 @@
 
 This extension registers a custom provider that routes LLM calls through the **Claude Agent SDK** while **pi executes tools** and renders tool results in the TUI.
 
+> **Fork note:** This is a personal fork of [`prateekmedia/claude-agent-sdk-pi`](https://github.com/prateekmedia/claude-agent-sdk-pi), customized for my needs.
+
 ## Highlights
 
 - Claude Agent SDK is used as the LLM backend (Claude Code auth or API key).
@@ -47,6 +49,14 @@ Typed provider errors are exported too:
 ## Demo
 
 ![Demo](screenshot.png)
+
+## Tool conformance smoke test
+
+Use this reusable prompt in pi TUI:
+
+- `prompts/tool-conformance.md`
+
+Copy/paste the prompt contents into a chat while using a `claude-agent-sdk/...` model. It validates read/write/edit/bash/find in one run.
 
 ## Setup
 
