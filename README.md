@@ -10,6 +10,40 @@ This extension registers a custom provider that routes LLM calls through the **C
 - Custom tools are exposed to Claude Code via in-process MCP.
 - Skills can be appended to Claude Code’s default system prompt (optional).
 
+## v2 alpha API (type-safe features)
+
+You can register the provider with typed feature hooks:
+
+```ts
+import { createProvider, createToolPlugin, type ClaudeAgentSdkFeature } from "claude-agent-sdk-pi";
+
+const loggingFeature: ClaudeAgentSdkFeature = {
+  name: "logging",
+  onToolCall: (ctx) => {
+    console.log("tool call", ctx.toolName, ctx.args);
+  },
+};
+
+const readPlugin = createToolPlugin({
+  name: "typed-read-plugin",
+  toolName: "read",
+  decodeArgs: (args) => ({ path: String(args.path ?? "") }),
+  onToolCall: ({ args }) => {
+    console.log("typed read path", args.path);
+  },
+});
+
+export default createProvider({
+  features: [loggingFeature, readPlugin],
+});
+```
+
+Typed provider errors are exported too:
+
+- `ClaudeAgentSdkProviderError`
+- `ClaudeAgentSdkProviderErrorCode`
+- `toProviderError(...)`
+
 ## Demo
 
 ![Demo](screenshot.png)
