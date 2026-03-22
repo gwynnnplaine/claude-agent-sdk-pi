@@ -2,6 +2,8 @@
 
 This extension registers a custom provider that routes LLM calls through the **Claude Agent SDK** while **pi executes tools** and renders tool results in the TUI.
 
+> **Fork note:** This is a personal fork of [`prateekmedia/claude-agent-sdk-pi`](https://github.com/prateekmedia/claude-agent-sdk-pi), customized for my needs.
+
 ## Highlights
 
 - Claude Agent SDK is used as the LLM backend (Claude Code auth or API key).
@@ -10,9 +12,51 @@ This extension registers a custom provider that routes LLM calls through the **C
 - Custom tools are exposed to Claude Code via in-process MCP.
 - Skills can be appended to Claude Code’s default system prompt (optional).
 
+## v2 alpha API (type-safe features)
+
+You can register the provider with typed feature hooks:
+
+```ts
+import { createProvider, createToolPlugin, type ClaudeAgentSdkFeature } from "claude-agent-sdk-pi";
+
+const loggingFeature: ClaudeAgentSdkFeature = {
+  name: "logging",
+  onToolCall: (ctx) => {
+    console.log("tool call", ctx.toolName, ctx.args);
+  },
+};
+
+const readPlugin = createToolPlugin({
+  name: "typed-read-plugin",
+  toolName: "read",
+  decodeArgs: (args) => ({ path: String(args.path ?? "") }),
+  onToolCall: ({ args }) => {
+    console.log("typed read path", args.path);
+  },
+});
+
+export default createProvider({
+  features: [loggingFeature, readPlugin],
+});
+```
+
+Typed provider errors are exported too:
+
+- `ClaudeAgentSdkProviderError`
+- `ClaudeAgentSdkProviderErrorCode`
+- `toProviderError(...)`
+
 ## Demo
 
 ![Demo](screenshot.png)
+
+## Tool conformance smoke test
+
+Use this reusable prompt in pi TUI:
+
+- `prompts/tool-conformance.md`
+
+Copy/paste the prompt contents into a chat while using a `claude-agent-sdk/...` model. It validates read/write/edit/bash/find in one run.
 
 ## Setup
 
